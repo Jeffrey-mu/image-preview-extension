@@ -14,12 +14,14 @@ const imagePreviewer = (() => {
     prevBodyOverflow: "",
   };
 
+  const REDUCE_MOTION = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+
   let host;
   let shadow;
   let overlay;
-  let canvas;
   let img;
   let label;
+  let stage;
   let entry;
   let entryBtn;
   let entryImg;
@@ -191,13 +193,15 @@ const imagePreviewer = (() => {
     label.textContent = `缩放 ${percent}% · 旋转 ${normalizeRotate(STATE.rotate)}°`;
   }
 
+  let renderRafId = 0;
   function applyTransform() {
-    if (!canvas) return;
-    canvas.style.setProperty("--s", `${STATE.scale}`);
-    canvas.style.setProperty("--r", `${STATE.rotate}deg`);
-    canvas.style.setProperty("--x", `${STATE.translateX}px`);
-    canvas.style.setProperty("--y", `${STATE.translateY}px`);
-    updateLabel();
+    if (!img) return;
+    if (renderRafId) return;
+    renderRafId = window.requestAnimationFrame(() => {
+      renderRafId = 0;
+      img.style.transform = `translate(${STATE.translateX}px, ${STATE.translateY}px) rotate(${STATE.rotate}deg) scaleX(${STATE.scale}) scaleY(${STATE.scale})`;
+      updateLabel();
+    });
   }
 
   function resetTransform() {
@@ -210,20 +214,26 @@ const imagePreviewer = (() => {
 
   function fitToViewport() {
     if (!img?.naturalWidth || !img?.naturalHeight) return;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const margin = Math.max(24, Math.min(vw, vh) * 0.06);
-    const availableW = Math.max(1, vw - margin * 2);
-    const availableH = Math.max(1, vh - margin * 2 - 56);
+    const rect = stage.getBoundingClientRect();
+    const stageW = rect.width;
+    const stageH = rect.height;
+    
+    const margin = Math.max(24, Math.min(stageW, stageH) * 0.06);
+    const availableW = Math.max(1, stageW - margin * 2);
+    const availableH = Math.max(1, stageH - margin * 2);
 
     const r = normalizeRotate(STATE.rotate);
     const baseW = r === 90 || r === 270 ? img.naturalHeight : img.naturalWidth;
     const baseH = r === 90 || r === 270 ? img.naturalWidth : img.naturalHeight;
 
     const scale = Math.min(availableW / baseW, availableH / baseH, 8);
-    STATE.scale = clamp(scale, 0.05, 10);
-    STATE.translateX = 0;
-    STATE.translateY = 0;
+    STATE.scale = clamp(scale, 0.05, 100);
+
+    const imgW = img.offsetWidth || img.naturalWidth;
+    const imgH = img.offsetHeight || img.naturalHeight;
+
+    STATE.translateX = stageW / 2 - imgW / 2;
+    STATE.translateY = stageH / 2 - imgH / 2;
     applyTransform();
   }
 
@@ -239,6 +249,17 @@ const imagePreviewer = (() => {
     } else {
       document.body.style.overflow = STATE.prevBodyOverflow;
     }
+  }
+
+  function getStageCenterClient() {
+    if (!stage) return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    const rect = stage.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }
+
+  function zoomAtStageCenter(factor) {
+    const c = getStageCenterClient();
+    zoomBy(factor, c.x, c.y);
   }
 
   function ensureUI() {
@@ -345,16 +366,10 @@ const imagePreviewer = (() => {
           cursor: grab;
         }
         .stage[data-dragging="1"]{cursor: grabbing}
-        .canvas{
-          position:absolute;
-          left: 50%;
-          top: 50%;
-          transform: translate(-50%, -50%) translate(var(--x, 0px), var(--y, 0px)) rotate(var(--r, 0deg)) scale(var(--s, 1));
-          transform-origin: center center;
-          will-change: transform;
-          filter: drop-shadow(0 16px 38px rgba(0,0,0,0.45));
-        }
         img{
+          position:absolute;
+          left: 0;
+          top: 0;
           display:block;
           max-width:none;
           max-height:none;
@@ -362,6 +377,13 @@ const imagePreviewer = (() => {
           -webkit-user-drag:none;
           border-radius: 14px;
           background: rgba(255,255,255,0.04);
+          transform-origin: center center;
+          will-change: transform;
+          box-shadow: 0 16px 38px rgba(0,0,0,0.45);
+          transition: transform 0.12s cubic-bezier(0.2, 0, 0.2, 1);
+        }
+        .stage[data-dragging="1"] img {
+          transition: none;
         }
         .hint{
           position:absolute;
@@ -401,9 +423,7 @@ const imagePreviewer = (() => {
             <button class="btn primary" data-action="close" type="button">关闭</button>
           </div>
           <div class="stage" data-dragging="0">
-            <div class="canvas" style="--s:1;--r:0deg;--x:0px;--y:0px">
-              <img />
-            </div>
+            <img />
             <div class="hint" id="hint">滚轮缩放 · 拖拽移动 · Esc 关闭</div>
           </div>
         </div>
@@ -411,7 +431,6 @@ const imagePreviewer = (() => {
     `;
 
     overlay = shadow.querySelector(".overlay");
-    canvas = shadow.querySelector(".canvas");
     img = shadow.querySelector("img");
     label = shadow.getElementById("label");
     entry = shadow.querySelector(".entry");
@@ -456,12 +475,12 @@ const imagePreviewer = (() => {
 
       if (e.key === "+" || e.key === "=") {
         e.preventDefault();
-        zoomBy(1.12, window.innerWidth / 2, window.innerHeight / 2);
+        zoomAtStageCenter(1.12);
         return;
       }
       if (e.key === "-" || e.key === "_") {
         e.preventDefault();
-        zoomBy(1 / 1.12, window.innerWidth / 2, window.innerHeight / 2);
+        zoomAtStageCenter(1 / 1.12);
         return;
       }
       if (e.key === "0") {
@@ -481,13 +500,17 @@ const imagePreviewer = (() => {
       }
     });
 
-    const stage = shadow.querySelector(".stage");
+    stage = shadow.querySelector(".stage");
     stage.addEventListener(
       "wheel",
       (e) => {
         if (!STATE.open) return;
         e.preventDefault();
-        const factor = e.deltaY > 0 ? 1 / 1.12 : 1.12;
+        let delta = e.deltaY;
+        if (e.deltaMode === 1) delta *= 16;
+        if (e.deltaMode === 2) delta *= window.innerHeight;
+        let factor = Math.exp(-delta * 0.002);
+        factor = clamp(factor, 0.2, 5);
         zoomBy(factor, e.clientX, e.clientY);
       },
       { passive: false },
@@ -544,14 +567,20 @@ const imagePreviewer = (() => {
 
   function zoomBy(factor, clientX, clientY) {
     const oldScale = STATE.scale;
-    const newScale = clamp(oldScale * factor, 0.05, 10);
+    const newScale = clamp(oldScale * factor, 0.05, 100);
     if (newScale === oldScale) return;
 
-    const cx = clientX - window.innerWidth / 2;
-    const cy = clientY - window.innerHeight / 2;
+    // 避免引发同步重排 (Layout Thrashing)
+    const mouseX = clientX;
+    const mouseY = clientY - 52; // stage 的 offset top 固定为 52px
+
+    const originX = (img.naturalWidth || 0) / 2;
+    const originY = (img.naturalHeight || 0) / 2;
+
     const ratio = newScale / oldScale;
-    STATE.translateX = cx - ratio * (cx - STATE.translateX);
-    STATE.translateY = cy - ratio * (cy - STATE.translateY);
+
+    STATE.translateX = mouseX - originX - (mouseX - originX - STATE.translateX) * ratio;
+    STATE.translateY = mouseY - originY - (mouseY - originY - STATE.translateY) * ratio;
     STATE.scale = newScale;
     applyTransform();
   }
@@ -568,11 +597,11 @@ const imagePreviewer = (() => {
       return;
     }
     if (action === "zoomIn") {
-      zoomBy(1.12, window.innerWidth / 2, window.innerHeight / 2);
+      zoomAtStageCenter(1.12);
       return;
     }
     if (action === "zoomOut") {
-      zoomBy(1 / 1.12, window.innerWidth / 2, window.innerHeight / 2);
+      zoomAtStageCenter(1 / 1.12);
       return;
     }
     if (action === "rotateLeft") {
