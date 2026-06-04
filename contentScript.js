@@ -1,4 +1,6 @@
-const imagePreviewer = (() => {
+(() => {
+  if (globalThis.imagePreviewer) return;
+
   const STATE = {
     open: false,
     src: "",
@@ -13,8 +15,6 @@ const imagePreviewer = (() => {
     dragStartTranslateY: 0,
     prevBodyOverflow: "",
   };
-
-  const REDUCE_MOTION = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
 
   let host;
   let shadow;
@@ -241,6 +241,7 @@ const imagePreviewer = (() => {
     STATE.open = open;
     if (!overlay) return;
     overlay.dataset.open = open ? "1" : "0";
+    overlay.setAttribute("aria-hidden", open ? "false" : "true");
     if (open) {
       hideEntry(true);
       STATE.prevBodyOverflow = document.body.style.overflow || "";
@@ -248,6 +249,9 @@ const imagePreviewer = (() => {
       overlay.focus({ preventScroll: true });
     } else {
       document.body.style.overflow = STATE.prevBodyOverflow;
+      STATE.dragging = false;
+      if (stage) stage.dataset.dragging = "0";
+      if (img) img.removeAttribute("src");
     }
   }
 
@@ -275,7 +279,21 @@ const imagePreviewer = (() => {
     shadow = host.attachShadow({ mode: "open" });
     shadow.innerHTML = `
       <style>
-        :host{all:initial}
+        :host{
+          all:initial;
+          --ip-bg: rgba(9, 10, 12, 0.74);
+          --ip-panel: rgba(22, 24, 28, 0.86);
+          --ip-panel-strong: rgba(16, 18, 22, 0.92);
+          --ip-border: rgba(255,255,255,0.12);
+          --ip-border-strong: rgba(255,255,255,0.22);
+          --ip-text: rgb(246, 247, 249);
+          --ip-muted: rgba(246, 247, 249, 0.68);
+          --ip-accent: rgb(99, 132, 255);
+          --ip-accent-soft: rgba(99, 132, 255, 0.20);
+          --ip-danger: rgb(255, 112, 112);
+          --ip-radius: 8px;
+          --ip-ease: cubic-bezier(0.2, 0, 0.2, 1);
+        }
         .entry{
           position: fixed;
           z-index: 2147483647;
@@ -285,80 +303,95 @@ const imagePreviewer = (() => {
         .entry[data-show="1"]{display:block}
         .entryBtn{
           height: 34px;
-          padding: 0 12px;
-          border-radius: 999px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(18, 20, 24, 0.70);
-          color: rgb(245, 246, 248);
+          padding: 0 11px;
+          border-radius: var(--ip-radius);
+          border: 1px solid var(--ip-border);
+          background: var(--ip-panel-strong);
+          color: var(--ip-text);
           font-size: 12px;
-          letter-spacing: 0.2px;
+          letter-spacing: 0;
           line-height: 34px;
           cursor: pointer;
           user-select: none;
-          box-shadow: 0 10px 24px rgba(0,0,0,0.45);
+          box-shadow: 0 10px 28px rgba(0,0,0,0.38);
           backdrop-filter: blur(6px);
           -webkit-backdrop-filter: blur(6px);
-          transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+          transition: transform 120ms var(--ip-ease), background 120ms var(--ip-ease), border-color 120ms var(--ip-ease);
         }
-        .entryBtn:hover{background: rgba(18, 20, 24, 0.82); border-color: rgba(255,255,255,0.22)}
+        .entryBtn:hover{background: rgba(29, 32, 38, 0.92); border-color: var(--ip-border-strong)}
+        .entryBtn:focus-visible{outline: 2px solid var(--ip-accent); outline-offset: 2px}
         .entryBtn:active{transform: translateY(1px)}
         .overlay{
           position:fixed; inset:0;
           display:none;
           pointer-events:auto;
-          background: rgba(15, 16, 18, 0.72);
+          background: var(--ip-bg);
           backdrop-filter: blur(6px);
           -webkit-backdrop-filter: blur(6px);
-          color: rgb(245, 246, 248);
+          color: var(--ip-text);
           font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif;
           outline: none;
         }
         .overlay[data-open="1"]{display:block}
         .chrome{
-          position:absolute; inset: 16px;
-          border-radius: 18px;
-          border: 1px solid rgba(255,255,255,0.10);
-          background: rgba(20, 22, 26, 0.58);
-          box-shadow: 0 22px 80px rgba(0,0,0,0.55);
+          position:absolute; inset: 12px;
+          border-radius: var(--ip-radius);
+          border: 1px solid var(--ip-border);
+          background: rgba(16, 18, 22, 0.50);
+          box-shadow: 0 24px 70px rgba(0,0,0,0.48);
           overflow:hidden;
         }
         .toolbar{
-          height: 52px;
+          min-height: 52px;
           display:flex;
           align-items:center;
-          gap: 10px;
-          padding: 0 12px;
-          border-bottom: 1px solid rgba(255,255,255,0.10);
-          background: rgba(18, 20, 24, 0.72);
+          gap: 8px;
+          padding: 8px 10px;
+          border-bottom: 1px solid var(--ip-border);
+          background: var(--ip-panel);
+          box-sizing:border-box;
         }
         .title{
+          min-width: 132px;
           font-size: 13px;
-          letter-spacing: 0.2px;
-          opacity: 0.9;
+          letter-spacing: 0;
+          color: var(--ip-muted);
           user-select:none;
           white-space:nowrap;
         }
         .spacer{flex:1}
+        .group{
+          display:flex;
+          align-items:center;
+          gap: 6px;
+          padding: 3px;
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: var(--ip-radius);
+          background: rgba(255,255,255,0.045);
+        }
         .btn{
           height: 32px;
-          padding: 0 10px;
-          border-radius: 10px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(255,255,255,0.06);
+          min-width: 44px;
+          padding: 0 9px;
+          border-radius: 6px;
+          border: 1px solid transparent;
+          background: transparent;
           color: inherit;
           font-size: 12px;
           line-height: 32px;
           user-select:none;
           cursor: pointer;
-          transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+          transition: transform 120ms var(--ip-ease), background 120ms var(--ip-ease), border-color 120ms var(--ip-ease), color 120ms var(--ip-ease);
         }
-        .btn:hover{background: rgba(255,255,255,0.10); border-color: rgba(255,255,255,0.22)}
+        .btn:hover{background: rgba(255,255,255,0.10); border-color: rgba(255,255,255,0.10)}
+        .btn:focus-visible{outline: 2px solid var(--ip-accent); outline-offset: 2px}
         .btn:active{transform: translateY(1px)}
         .btn.primary{
-          background: rgba(67, 116, 255, 0.18);
-          border-color: rgba(115, 147, 255, 0.48);
+          background: var(--ip-accent-soft);
+          border-color: rgba(99, 132, 255, 0.42);
+          color: var(--ip-text);
         }
-        .btn.primary:hover{background: rgba(67, 116, 255, 0.24)}
+        .btn.primary:hover{background: rgba(99, 132, 255, 0.28)}
         .stage{
           position:absolute; inset: 52px 0 0 0;
           display:block;
@@ -375,12 +408,12 @@ const imagePreviewer = (() => {
           max-height:none;
           user-select:none;
           -webkit-user-drag:none;
-          border-radius: 14px;
+          border-radius: var(--ip-radius);
           background: rgba(255,255,255,0.04);
           transform-origin: center center;
           will-change: transform;
-          box-shadow: 0 16px 38px rgba(0,0,0,0.45);
-          transition: transform 0.12s cubic-bezier(0.2, 0, 0.2, 1);
+          box-shadow: 0 16px 38px rgba(0,0,0,0.42);
+          transition: transform 0.12s var(--ip-ease);
         }
         .stage[data-dragging="1"] img {
           transition: none;
@@ -390,18 +423,36 @@ const imagePreviewer = (() => {
           left: 18px;
           bottom: 14px;
           padding: 8px 10px;
-          border-radius: 12px;
-          border: 1px solid rgba(255,255,255,0.10);
-          background: rgba(18, 20, 24, 0.62);
+          border-radius: var(--ip-radius);
+          border: 1px solid var(--ip-border);
+          background: rgba(18, 20, 24, 0.68);
           font-size: 12px;
-          opacity: 0.92;
+          color: var(--ip-muted);
           user-select:none;
           max-width: min(720px, calc(100vw - 80px));
           text-overflow: ellipsis;
           overflow:hidden;
           white-space:nowrap;
         }
+        @media (max-width: 720px){
+          .chrome{inset: 8px}
+          .toolbar{
+            overflow-x:auto;
+            scrollbar-width:none;
+          }
+          .toolbar::-webkit-scrollbar{display:none}
+          .title{min-width: max-content}
+          .spacer{display:none}
+          .group{flex:0 0 auto}
+          .hint{
+            left: 10px;
+            right: 10px;
+            bottom: 10px;
+            max-width:none;
+          }
+        }
         @media (prefers-reduced-motion: reduce){
+          img{transition:none}
           .btn{transition:none}
           .entryBtn{transition:none}
         }
@@ -414,13 +465,19 @@ const imagePreviewer = (() => {
           <div class="toolbar">
             <div class="title" id="label">缩放 100% · 旋转 0°</div>
             <div class="spacer"></div>
-            <button class="btn" data-action="zoomOut" type="button">缩小</button>
-            <button class="btn" data-action="zoomIn" type="button">放大</button>
-            <button class="btn" data-action="rotateLeft" type="button">左转</button>
-            <button class="btn" data-action="rotateRight" type="button">右转</button>
-            <button class="btn" data-action="fit" type="button">适配</button>
-            <button class="btn" data-action="reset" type="button">重置</button>
-            <button class="btn primary" data-action="close" type="button">关闭</button>
+            <div class="group" aria-label="缩放">
+              <button class="btn" data-action="zoomOut" type="button" title="缩小">缩小</button>
+              <button class="btn" data-action="zoomIn" type="button" title="放大">放大</button>
+            </div>
+            <div class="group" aria-label="旋转">
+              <button class="btn" data-action="rotateLeft" type="button" title="左转">左转</button>
+              <button class="btn" data-action="rotateRight" type="button" title="右转">右转</button>
+            </div>
+            <div class="group" aria-label="视图">
+              <button class="btn" data-action="fit" type="button" title="适配窗口">适配</button>
+              <button class="btn" data-action="reset" type="button" title="重置视图">重置</button>
+            </div>
+            <button class="btn primary" data-action="close" type="button" title="关闭预览">关闭</button>
           </div>
           <div class="stage" data-dragging="0">
             <img />
@@ -570,9 +627,9 @@ const imagePreviewer = (() => {
     const newScale = clamp(oldScale * factor, 0.05, 100);
     if (newScale === oldScale) return;
 
-    // 避免引发同步重排 (Layout Thrashing)
-    const mouseX = clientX;
-    const mouseY = clientY - 52; // stage 的 offset top 固定为 52px
+    const stageRect = stage.getBoundingClientRect();
+    const mouseX = clientX - stageRect.left;
+    const mouseY = clientY - stageRect.top;
 
     const originX = (img.naturalWidth || 0) / 2;
     const originY = (img.naturalHeight || 0) / 2;
@@ -635,15 +692,15 @@ const imagePreviewer = (() => {
     applyTransform();
   }
 
-  return {
+  globalThis.imagePreviewer = {
     open,
   };
-})();
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || message.type !== "IMAGE_PREVIEW_OPEN") return;
-  const src = message?.payload?.src;
-  if (!src) return;
-  imagePreviewer.open(src);
-  sendResponse({ ok: true });
-});
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (!message || message.type !== "IMAGE_PREVIEW_OPEN") return;
+    const src = message?.payload?.src;
+    if (!src) return;
+    globalThis.imagePreviewer.open(src);
+    sendResponse({ ok: true });
+  });
+})();

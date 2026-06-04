@@ -41,17 +41,6 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     const firstTry = await sendOpenMessage(tab.id, src);
     if (firstTry.ok) return;
 
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        files: ["contentScript.js"],
-      });
-      const secondTry = await sendOpenMessage(tab.id, src);
-      if (secondTry.ok) return;
-    } catch (e) {
-      void e;
-    }
-
     chrome.tabs.create({ url: src });
   })();
 });
