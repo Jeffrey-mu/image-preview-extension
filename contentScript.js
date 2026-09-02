@@ -25,6 +25,8 @@
   let entry;
   let entryBtn;
   let entryImg;
+  let filmstrip;
+  let filmstripTrack;
   let entryHideTimer;
   let hoverBound = false;
 
@@ -34,10 +36,89 @@
 
   function getImageSrc(el) {
     if (!el) return "";
-    if (el.currentSrc) return el.currentSrc;
-    if (el.src) return el.src;
-    const raw = el.getAttribute?.("src");
-    return raw || "";
+    const explicit = el.getAttribute?.("src") || "";
+    const dataset = el.dataset || {};
+    const lazyCandidates = [
+      dataset.original,
+      dataset.originalSrc,
+      dataset.full,
+      dataset.fullSrc,
+      dataset.src,
+      dataset.lazySrc,
+      dataset.realSrc,
+    ];
+    const current = el.currentSrc || "";
+
+    if (current && !current.startsWith("data:")) return current;
+
+    for (const candidate of lazyCandidates) {
+      if (typeof candidate !== "string") continue;
+      const value = candidate.trim();
+      if (!value || value === explicit || value === current) continue;
+      if (value.startsWith("data:")) continue;
+      return value;
+    }
+
+    if (current && current.startsWith("data:")) return explicit || current;
+    return current || explicit || "";
+  }
+
+  function collectImgElements(root) {
+    return Array.from((root || document).querySelectorAll?.("img") || []);
+  }
+
+  function findImageBySrcValue(src) {
+    if (!src) return null;
+    for (const el of document.images) {
+      if (!(el instanceof HTMLImageElement)) continue;
+      if (
+        getImageSrc(el) === src ||
+        el.currentSrc === src ||
+        el.src === src ||
+        el.getAttribute("src") === src
+      ) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function collectRelatedSources(src, sourceEl) {
+    const seen = new Set();
+    const sources = [];
+    let root = null;
+
+    if (sourceEl) {
+      let node = sourceEl.parentElement;
+      let depth = 0;
+      while (node && node !== document.documentElement && depth < 6) {
+        const imgs = collectImgElements(node).filter((el) => {
+          if (!(el instanceof HTMLImageElement)) return false;
+          if (!getImageSrc(el)) return false;
+          const rect = el.getBoundingClientRect();
+          return !!rect.width && !!rect.height;
+        });
+        if (imgs.length >= 2) {
+          root = node;
+          break;
+        }
+        node = node.parentElement;
+        depth += 1;
+      }
+    }
+
+    const candidates = root ? collectImgElements(root) : Array.from(document.images);
+    for (const el of candidates) {
+      if (!(el instanceof HTMLImageElement)) continue;
+      const value = getImageSrc(el);
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      sources.push(value);
+      if (sources.length >= 80) break;
+    }
+
+    if (src && !seen.has(src)) sources.unshift(src);
+    return sources;
   }
 
   function clearEntryHideTimer() {
@@ -399,7 +480,7 @@
           cursor: grab;
         }
         .stage[data-dragging="1"]{cursor: grabbing}
-        img{
+        .stage img{
           position:absolute;
           left: 0;
           top: 0;
@@ -417,6 +498,73 @@
         }
         .stage[data-dragging="1"] img {
           transition: none;
+        }
+        .overlay.has-filmstrip .stage{
+          inset: 52px 0 96px 0;
+        }
+        .filmstrip{
+          position:absolute;
+          left: 10px;
+          right: 10px;
+          bottom: 10px;
+          height: 86px;
+          z-index: 2;
+          box-sizing:border-box;
+          display:flex;
+          align-items:center;
+          gap: 10px;
+          padding: 10px;
+          border: 1px solid var(--ip-border);
+          border-radius: var(--ip-radius);
+          background: var(--ip-panel);
+          box-shadow: 0 12px 34px rgba(0,0,0,0.34);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+        }
+        .filmstrip[data-empty="1"]{display:none}
+        .filmstripLabel{
+          flex: 0 0 auto;
+          font-size: 12px;
+          color: var(--ip-muted);
+          letter-spacing: 0;
+          user-select:none;
+          white-space:nowrap;
+        }
+        .filmstripTrack{
+          flex: 1;
+          display:flex;
+          align-items:center;
+          gap: 8px;
+          overflow-x:auto;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255,255,255,0.22) transparent;
+        }
+        .filmstripTrack::-webkit-scrollbar{height: 5px}
+        .filmstripTrack::-webkit-scrollbar-thumb{background: rgba(255,255,255,0.22); border-radius: 4px}
+        .thumb{
+          flex: 0 0 auto;
+          width: 62px;
+          height: 50px;
+          padding: 0;
+          border: 1px solid var(--ip-border);
+          border-radius: 6px;
+          background: rgba(255,255,255,0.06);
+          overflow: hidden;
+          cursor: pointer;
+          transition: border-color 120ms var(--ip-ease), transform 120ms var(--ip-ease), box-shadow 120ms var(--ip-ease);
+        }
+        .thumb:hover{border-color: var(--ip-border-strong); transform: translateY(-1px)}
+        .thumb:focus-visible{outline: 2px solid var(--ip-accent); outline-offset: 2px}
+        .thumb.active{
+          border-color: var(--ip-accent);
+          box-shadow: inset 0 0 0 2px rgba(99,132,255,0.42);
+        }
+        .thumb img{
+          display:block;
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          pointer-events:none;
         }
         .hint{
           position:absolute;
@@ -450,11 +598,14 @@
             bottom: 10px;
             max-width:none;
           }
+          .filmstripLabel{display:none}
+          .thumb{width: 56px; height: 48px}
         }
         @media (prefers-reduced-motion: reduce){
-          img{transition:none}
+          .stage img{transition:none}
           .btn{transition:none}
           .entryBtn{transition:none}
+          .thumb{transition:none}
         }
       </style>
       <div class="entry" data-show="0">
@@ -483,6 +634,10 @@
             <img />
             <div class="hint" id="hint">滚轮缩放 · 拖拽移动 · Esc 关闭</div>
           </div>
+          <div class="filmstrip" data-empty="1" role="region" aria-label="其他图片">
+            <div class="filmstripLabel">图片列表</div>
+            <div class="filmstripTrack"></div>
+          </div>
         </div>
       </div>
     `;
@@ -492,6 +647,8 @@
     label = shadow.getElementById("label");
     entry = shadow.querySelector(".entry");
     entryBtn = shadow.querySelector(".entryBtn");
+    filmstrip = shadow.querySelector(".filmstrip");
+    filmstripTrack = shadow.querySelector(".filmstripTrack");
 
     entry.addEventListener("pointerenter", () => {
       clearEntryHideTimer();
@@ -505,7 +662,7 @@
       if (!entryImg) return;
       const src = getImageSrc(entryImg);
       if (!src) return;
-      open(src);
+      open(src, entryImg);
     });
 
     overlay.addEventListener("click", (e) => {
@@ -682,9 +839,39 @@
     }
   }
 
-  function open(src) {
+  function renderFilmstrip(sources, activeSrc) {
+    if (!filmstrip || !filmstripTrack) return;
+    filmstripTrack.innerHTML = "";
+    const hasMore = sources.length > 1;
+    filmstrip.dataset.empty = hasMore ? "0" : "1";
+    overlay.classList.toggle("has-filmstrip", hasMore);
+
+    for (const src of sources) {
+      const thumbBtn = document.createElement("button");
+      thumbBtn.type = "button";
+      thumbBtn.className = "thumb";
+      if (src === activeSrc) thumbBtn.classList.add("active");
+
+      const thumbImg = document.createElement("img");
+      thumbImg.src = src;
+      thumbImg.alt = "";
+      thumbImg.loading = "lazy";
+      thumbBtn.appendChild(thumbImg);
+
+      thumbBtn.addEventListener("click", () => {
+        if (src === STATE.src) return;
+        open(src, findImageBySrcValue(src));
+      });
+
+      filmstripTrack.appendChild(thumbBtn);
+    }
+  }
+
+  function open(src, sourceEl) {
     ensureUI();
     STATE.src = src;
+    const related = collectRelatedSources(src, sourceEl || findImageBySrcValue(src));
+    renderFilmstrip(related, src);
     resetTransform();
     setOpen(true);
     img.src = src;
